@@ -1,0 +1,186 @@
+From 88ae95ba5819283d278af0bfcb4ba5068f79798f Mon Sep 17 00:00:00 2001
+From: Michael A Cassaniti <michael@cassaniti.id.au>
+Date: Fri, 11 Sep 2026 14:43:42 +1000
+Subject: [PATCH 1/3] Drivers/OptionRomPkg: Fix zero-length USB control
+ requests
+
+FTDI vendor control requests (such as SET_DATA, SET_BAUDRATE,
+SET_FLOW_CTRL, SET_DTR, SET_RTS, and RESET_PORT) carry all command
+parameters in the SETUP packet (wValue/wIndex) with DevReq.Length = 0,
+indicating that there is no DATA stage in the USB transaction.
+
+However, the driver improperly invoked UsbControlTransfer() passing
+EfiUsbDataOut or EfiUsbDataIn with a 1-byte dummy stack buffer and a
+length of 1. Compliant UEFI USB host controllers (such as XhciDxe and
+EhciDxe) attempt a DATA stage transfer when a data direction is
+specified, resulting in USB transaction errors and device stalls.
+
+As prior art, the Linux kernel FTDI driver (drivers/usb/serial/ftdi_sio.c
+at tag v6.13) confirms this across all corresponding vendor requests:
+- FTDI_SIO_SET_MODEM_CTRL_REQUEST (lines 1229-1234): data=NULL, len=0
+- FTDI_SIO_SET_BAUDRATE_REQUEST   (lines 1370-1375): data=NULL, len=0
+- FTDI_SIO_RESET_REQUEST          (lines 2357-2360): data=NULL, len=0
+- FTDI_SIO_SET_FLOW_CTRL_REQUEST  (lines 2766-2769): data=NULL, len=0
+- FTDI_SIO_SET_DATA_REQUEST       (lines 2714-2718): data=NULL, len=0
+
+Fix all zero-length UsbControlTransfer calls to use EfiUsbNoData,
+NULL data buffer, and 0 data length.
+
+Signed-off-by: Michael A Cassaniti <michael@cassaniti.id.au>
+---
+ .../FtdiUsbSerialDxe/FtdiUsbSerialDriver.c    | 48 ++++++++-----------
+ 1 file changed, 21 insertions(+), 27 deletions(-)
+
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
+index ac09fae..efb1d0b 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
+@@ -599,7 +599,6 @@ SetDataInternal (
+   EFI_STATUS              Status;
+   EFI_USB_DEVICE_REQUEST  DevReq;
+   UINT32                  ReturnValue;
+-  UINT8                   ConfigurationValue;
+ 
+   //
+   // Since data bits settings of 6,7,8 cannot be set with a stop bits setting of
+@@ -687,10 +686,10 @@ SetDataInternal (
+   Status = UsbIo->UsbControlTransfer (
+                     UsbIo,
+                     &DevReq,
+-                    EfiUsbDataOut,
++                    EfiUsbNoData,
+                     WDR_SHORT_TIMEOUT,
+-                    &ConfigurationValue,
+-                    1,
++                    NULL,
++                    0,
+                     &ReturnValue
+                     );
+   if (EFI_ERROR (Status)) {
+@@ -733,7 +732,6 @@ SetBaudRateInternal (
+   EFI_STATUS              Status;
+   EFI_USB_DEVICE_REQUEST  DevReq;
+   UINT32                  ReturnValue;
+-  UINT8                   ConfigurationValue;
+   UINT16                  EncodedBaudRate;
+   EFI_TPL                 Tpl;
+ 
+@@ -779,10 +777,10 @@ SetBaudRateInternal (
+   Status = UsbIo->UsbControlTransfer (
+                     UsbIo,
+                     &DevReq,
+-                    EfiUsbDataOut,
++                    EfiUsbNoData,
+                     WDR_SHORT_TIMEOUT,
+-                    &ConfigurationValue,
+-                    1,
++                    NULL,
++                    0,
+                     &ReturnValue
+                     );
+   if (EFI_ERROR (Status)) {
+@@ -995,7 +993,6 @@ SetFlowControlInternal (
+   EFI_STATUS               Status;
+   EFI_USB_DEVICE_REQUEST   DevReq;
+   UINT32                   ReturnValue;
+-  UINT8                    ConfigurationValue;
+ 
+   //
+   // set DevReq.Value based on the value of FlowControlEnable
+@@ -1017,10 +1014,10 @@ SetFlowControlInternal (
+   Status              = UsbIo->UsbControlTransfer (
+                                  UsbIo,
+                                  &DevReq,
+-                                 EfiUsbDataOut,
++                                 EfiUsbNoData,
+                                  WDR_TIMEOUT,
+-                                 &ConfigurationValue,
+-                                 1,
++                                 NULL,
++                                 0,
+                                  &ReturnValue
+                                  );
+   if (EFI_ERROR (Status)) {
+@@ -1064,7 +1061,6 @@ SetDtrInternal (
+   EFI_STATUS              Status;
+   EFI_USB_DEVICE_REQUEST  DevReq;
+   UINT32                  ReturnValue;
+-  UINT8                   ConfigurationValue;
+ 
+   //
+   // set the value of DevReq.Value based on the value of DtrEnable
+@@ -1087,10 +1083,10 @@ SetDtrInternal (
+   Status = UsbIo->UsbControlTransfer (
+                     UsbIo,
+                     &DevReq,
+-                    EfiUsbDataOut,
++                    EfiUsbNoData,
+                     WDR_TIMEOUT,
+-                    &ConfigurationValue,
+-                    1,
++                    NULL,
++                    0,
+                     &ReturnValue
+                     );
+   if (EFI_ERROR (Status)) {
+@@ -1133,7 +1129,6 @@ SetRtsInternal (
+   EFI_STATUS              Status;
+   EFI_USB_DEVICE_REQUEST  DevReq;
+   UINT32                  ReturnValue;
+-  UINT8                   ConfigurationValue;
+ 
+   //
+   // set DevReq.Value based on the value of RtsEnable
+@@ -1157,10 +1152,10 @@ SetRtsInternal (
+   Status = UsbIo->UsbControlTransfer (
+                     UsbIo,
+                     &DevReq,
+-                    EfiUsbDataOut,
++                    EfiUsbNoData,
+                     WDR_TIMEOUT,
+-                    &ConfigurationValue,
+-                    1,
++                    NULL,
++                    0,
+                     &ReturnValue
+                     );
+   if (EFI_ERROR (Status)) {
+@@ -1381,7 +1376,6 @@ ResetInternal (
+ {
+   EFI_STATUS              Status;
+   EFI_USB_DEVICE_REQUEST  DevReq;
+-  UINT8                   ConfigurationValue;
+   UINT32                  ReturnValue;
+ 
+   DevReq.Request     = FTDI_COMMAND_RESET_PORT;
+@@ -1393,10 +1387,10 @@ ResetInternal (
+   Status = UsbSerialDevice->UsbIo->UsbControlTransfer (
+                                      UsbSerialDevice->UsbIo,
+                                      &DevReq,
+-                                     EfiUsbDataIn,
++                                     EfiUsbNoData,
+                                      WDR_TIMEOUT,
+-                                     &ConfigurationValue,
+-                                     1,
++                                     NULL,
++                                     0,
+                                      &ReturnValue
+                                      );
+   if (EFI_ERROR (Status)) {
+@@ -1412,10 +1406,10 @@ ResetInternal (
+   Status = UsbSerialDevice->UsbIo->UsbControlTransfer (
+                                      UsbSerialDevice->UsbIo,
+                                      &DevReq,
+-                                     EfiUsbDataIn,
++                                     EfiUsbNoData,
+                                      WDR_TIMEOUT,
+-                                     &ConfigurationValue,
+-                                     1,
++                                     NULL,
++                                     0,
+                                      &ReturnValue
+                                      );
+   if (EFI_ERROR (Status)) {
+-- 
+2.53.0
+

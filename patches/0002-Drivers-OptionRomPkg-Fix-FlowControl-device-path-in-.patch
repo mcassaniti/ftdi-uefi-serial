@@ -1,0 +1,66 @@
+From dbdc7165ad7502d442c303dd84b66daecb29d609 Mon Sep 17 00:00:00 2001
+From: Michael A Cassaniti <michael@cassaniti.id.au>
+Date: Fri, 11 Sep 2026 14:43:43 +1000
+Subject: [PATCH 2/3] Drivers/OptionRomPkg: Fix FlowControl device path in
+ FtdiUsbSerialDxe
+
+The FlowControl device path node was created with an uninitialized
+GUID (00000000-0000-0000-0000-000000000000) and was appended to the
+device path unconditionally. As a result, the node was considered
+invalid and rejected, which eventually led to no serial console.
+
+Initialize FlowControlDevicePath.Guid with gEfiUartDevicePathGuid and
+only append the flow control node if flow control is configured.
+
+Signed-off-by: Michael A Cassaniti <michael@cassaniti.id.au>
+---
+ .../FtdiUsbSerialDxe/FtdiUsbSerialDriver.c    | 23 +++++++++++--------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
+index efb1d0b..32e94b3 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
+@@ -1905,11 +1905,12 @@ UsbSerialDriverBindingStart (
+ 
+   //
+   // set the values of UsbSerialDevice->FlowControlDevicePath
+-  UsbSerialDevice->FlowControlDevicePath.Header.Type = MESSAGING_DEVICE_PATH;
+-  UsbSerialDevice->FlowControlDevicePath.Header.SubType = MSG_VENDOR_DP;
++  UsbSerialDevice->FlowControlDevicePath.Header.Type      = MESSAGING_DEVICE_PATH;
++  UsbSerialDevice->FlowControlDevicePath.Header.SubType   = MSG_VENDOR_DP;
+   UsbSerialDevice->FlowControlDevicePath.Header.Length[0] = (UINT8) (sizeof (UART_FLOW_CONTROL_DEVICE_PATH));
+   UsbSerialDevice->FlowControlDevicePath.Header.Length[1] = (UINT8) ((sizeof (UART_FLOW_CONTROL_DEVICE_PATH)) >> 8);
+-  UsbSerialDevice->FlowControlDevicePath.FlowControlMap = 0;
++  CopyGuid (&UsbSerialDevice->FlowControlDevicePath.Guid, &gEfiUartDevicePathGuid);
++  UsbSerialDevice->FlowControlDevicePath.FlowControlMap   = 0;
+ 
+   Status = SetAttributesInternal (
+              UsbSerialDevice, 
+@@ -2035,14 +2036,16 @@ UsbSerialDriverBindingStart (
+                                   (EFI_DEVICE_PATH_PROTOCOL *) &UsbSerialDevice->UartDevicePath
+                                   );
+   //
+-  // Continue building the device path by appending the flow control node
++  // Continue building the device path by appending the flow control node only if configured
+   //
+-  TempDevicePath = UsbSerialDevice->DevicePath;
+-  UsbSerialDevice->DevicePath = AppendDevicePathNode (
+-                                  TempDevicePath,
+-                                  (EFI_DEVICE_PATH_PROTOCOL *) &UsbSerialDevice->FlowControlDevicePath
+-                                  );
+-  FreePool (TempDevicePath);
++  if (FlowControl != NULL) {
++    TempDevicePath = UsbSerialDevice->DevicePath;
++    UsbSerialDevice->DevicePath = AppendDevicePathNode (
++                                    TempDevicePath,
++                                    (EFI_DEVICE_PATH_PROTOCOL *) &UsbSerialDevice->FlowControlDevicePath
++                                    );
++    FreePool (TempDevicePath);
++  }
+ 
+   if (UsbSerialDevice->DevicePath == NULL) {
+     Status = EFI_OUT_OF_RESOURCES;
+-- 
+2.53.0
+

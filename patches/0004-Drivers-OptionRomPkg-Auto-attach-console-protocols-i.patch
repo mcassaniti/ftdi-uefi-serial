@@ -1,0 +1,177 @@
+From a625988f1cf1101387e3965e3dbfa6ed6f3254e0 Mon Sep 17 00:00:00 2001
+From: Michael A Cassaniti <michael@cassaniti.id.au>
+Date: Fri, 11 Sep 2026 15:18:10 +1000
+Subject: [PATCH] Drivers/OptionRomPkg: Auto-attach console protocols in
+ FtdiUsbSerialDxe
+
+When FtdiUsbSerialDxe is loaded dynamically after platform BDS has
+completed (such as via a bootloader like systemd-boot or from the
+UEFI Shell), TerminalDxe creates SimpleTextIn/SimpleTextOut on the
+child terminal handle, but ConSplitter does not attach to it because
+console device GUIDs are not installed on hotplug devices by default.
+
+Add Feature PCD PcdFtdiAutoAttachConsole (enabled by default) to
+automatically connect TerminalDxe upon driver start, install
+gEfiConsoleInDeviceGuid, gEfiConsoleOutDeviceGuid, and
+gEfiStandardErrorDeviceGuid on terminal child handles, and connect
+ConSplitter. This allows USB serial adapters to immediately function
+as interactive system consoles (both input and output) without
+requiring firmware NVRAM pre-configuration.
+
+Update driver ReadMe.txt with console integration documentation.
+
+Signed-off-by: Michael A Cassaniti <michael@cassaniti.id.au>
+---
+ .../FtdiUsbSerialDxe/FtdiUsbSerialDriver.c    | 44 +++++++++++++++++++
+ .../FtdiUsbSerialDxe/FtdiUsbSerialDriver.h    |  1 +
+ .../Usb/FtdiUsbSerialDxe/FtdiUsbSerialDxe.inf |  9 ++++
+ .../Bus/Usb/FtdiUsbSerialDxe/ReadMe.txt       | 14 +++++-
+ Drivers/OptionRomPkg/OptionRomPkg.dec         |  8 ++++
+ 5 files changed, 75 insertions(+), 1 deletion(-)
+
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
+index ac09fae..c911cc0 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.c
+@@ -1706,6 +1706,10 @@ UsbSerialDriverBindingStart (
+   UART_FLOW_CONTROL_DEVICE_PATH       *FlowControl;
+   UINT32                              Control;
+   EFI_DEVICE_PATH_PROTOCOL            *TempDevicePath;
++  EFI_OPEN_PROTOCOL_INFORMATION_ENTRY *ChildInfo;
++  UINTN                               ChildCount;
++  UINTN                               ChildIdx;
++  EFI_HANDLE                          TerminalChild;
+ 
+   UsbSerialDevice = AllocateZeroPool (sizeof (USB_SER_DEV));
+   ASSERT (UsbSerialDevice != NULL);
+@@ -2084,6 +2088,46 @@ UsbSerialDriverBindingStart (
+ 
+   UsbSerialDevice->Shutdown = FALSE;
+ 
++  if (FeaturePcdGet (PcdFtdiAutoAttachConsole)) {
++    //
++    // Connect TerminalDxe to produce SimpleTextIn/SimpleTextOut on the child handle
++    //
++    gBS->ConnectController (UsbSerialDevice->ControllerHandle, NULL, NULL, TRUE);
++
++    //
++    // Query child handles produced by TerminalDxe, attach console device GUIDs,
++    // and connect ConSplitter so the USB serial port is included in system consoles
++    //
++    ChildInfo  = NULL;
++    ChildCount = 0;
++    Status     = gBS->OpenProtocolInformation (
++                        UsbSerialDevice->ControllerHandle,
++                        &gEfiSerialIoProtocolGuid,
++                        &ChildInfo,
++                        &ChildCount
++                        );
++    if (!EFI_ERROR (Status) && (ChildInfo != NULL)) {
++      for (ChildIdx = 0; ChildIdx < ChildCount; ChildIdx++) {
++        if ((ChildInfo[ChildIdx].Attributes & EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0) {
++          TerminalChild = ChildInfo[ChildIdx].ControllerHandle;
++          gBS->InstallMultipleProtocolInterfaces (
++                 &TerminalChild,
++                 &gEfiConsoleOutDeviceGuid,
++                 NULL,
++                 &gEfiConsoleInDeviceGuid,
++                 NULL,
++                 &gEfiStandardErrorDeviceGuid,
++                 NULL,
++                 NULL
++                 );
++          gBS->ConnectController (TerminalChild, NULL, NULL, TRUE);
++        }
++      }
++
++      FreePool (ChildInfo);
++    }
++  }
++
+   return EFI_SUCCESS;
+ 
+ ErrorExit:
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h
+index 6048923..f3aa548 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h
+@@ -16,6 +16,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiLib.h>
+ #include <Library/DevicePathLib.h>
++#include <Library/PcdLib.h>
+ 
+ #include <Protocol/DevicePath.h>
+ #include <Protocol/UsbIo.h>
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDxe.inf b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDxe.inf
+index 67c1d36..fffd9e4 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDxe.inf
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDxe.inf
+@@ -34,6 +34,8 @@
+ 
+ [Packages]
+   MdePkg/MdePkg.dec
++  MdeModulePkg/MdeModulePkg.dec
++  Drivers/OptionRomPkg/OptionRomPkg.dec
+ 
+ [LibraryClasses]
+   UefiDriverEntryPoint
+@@ -43,9 +45,16 @@
+   UefiBootServicesTableLib
+   UefiLib
+   DevicePathLib
++  PcdLib
+ 
+ [Guids]
+   gEfiUartDevicePathGuid
++  gEfiConsoleOutDeviceGuid
++  gEfiConsoleInDeviceGuid
++  gEfiStandardErrorDeviceGuid
++
++[FeaturePcd]
++  gOptionRomPkgTokenSpaceGuid.PcdFtdiAutoAttachConsole
+ 
+ [Protocols]
+   ## TO_START
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/ReadMe.txt b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/ReadMe.txt
+index d8ca227..bc2c5e8 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/ReadMe.txt
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/ReadMe.txt
+@@ -29,4 +29,16 @@ An FTDI8U232AM based USB-To-Serial adapter, the UEFI Shell, and the SerialTest a
+ using a PuTTY Terminal
+ 
+ See CompatibleDevices.txt for a list of devices which have been confirmed to work with this 
+-driver.
+\ No newline at end of file
++driver.
++
++=== CONSOLE INTEGRATION ===
++
++By default, the driver automatically binds TerminalDxe and installs Console
++Device protocols (gEfiConsoleInDeviceGuid, gEfiConsoleOutDeviceGuid, and
++gEfiStandardErrorDeviceGuid) on child terminal handles, connecting them to
++ConSplitter. This enables the USB serial adapter to be used immediately as a
++system console (both input and output) when loaded dynamically after platform
++BDS (e.g. by bootloaders such as systemd-boot or from the UEFI Shell).
++
++This behavior can be controlled at build time using the Feature PCD:
++  gOptionRomPkgTokenSpaceGuid.PcdFtdiAutoAttachConsole (default: TRUE)
+diff --git a/Drivers/OptionRomPkg/OptionRomPkg.dec b/Drivers/OptionRomPkg/OptionRomPkg.dec
+index 0d8b146..9df946f 100644
+--- a/Drivers/OptionRomPkg/OptionRomPkg.dec
++++ b/Drivers/OptionRomPkg/OptionRomPkg.dec
+@@ -36,3 +36,11 @@
+ [PcdsFixedAtBuild, PcdsPatchableInModule]
+   gOptionRomPkgTokenSpaceGuid.PcdDriverSupportedEfiVersion|0x0002000a|UINT32|0x00010003
+ 
++[PcdsFeatureFlag]
++  ## Indicates if FtdiUsbSerialDxe automatically connects TerminalDxe and attaches
++  #  Console protocols to enable dynamic console splitting.
++  #   TRUE  - Automatically attach console protocols and connect ConSplitter.<BR>
++  #   FALSE - Do not automatically attach console protocols.<BR>
++  # @Prompt Auto-attach console protocols for dynamic console splitting.
++  gOptionRomPkgTokenSpaceGuid.PcdFtdiAutoAttachConsole|TRUE|BOOLEAN|0x00010004
++
+-- 
+2.53.0
+

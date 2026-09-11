@@ -1,0 +1,38 @@
+From 306459130c79f6a2eb22faba6898a4d086ed908b Mon Sep 17 00:00:00 2001
+From: Michael A Cassaniti <michael@cassaniti.id.au>
+Date: Fri, 11 Sep 2026 14:43:43 +1000
+Subject: [PATCH 3/3] Drivers/OptionRomPkg: Increase FTDI_TIMEOUT for
+ virtualization
+
+FTDI_TIMEOUT is set to 16ms, matching the hardware latency timer of
+physical FTDI chips. Under virtualization (e.g. QEMU) or high system
+load, host scheduling latency and burst console writes can easily
+exceed 16ms, causing synchronous bulk transfers in WriteSerialIo to
+time out prematurely and drop characters.
+
+Increase FTDI_TIMEOUT from 16ms to 50ms (3x the hardware latency timer).
+This provides sufficient margin for hypervisor scheduling jitter while
+keeping worst-case blocking latency negligible if the device becomes
+unresponsive.
+
+Signed-off-by: Michael A Cassaniti <michael@cassaniti.id.au>
+---
+ .../OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h
+index 6048923..4f6699e 100644
+--- a/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h
++++ b/Drivers/OptionRomPkg/Bus/Usb/FtdiUsbSerialDxe/FtdiUsbSerialDriver.h
+@@ -154,7 +154,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ //
+ // FTDI timeout
+ //
+-#define FTDI_TIMEOUT       16
++#define FTDI_TIMEOUT       50
+ 
+ //
+ // FTDI FIFO depth
+-- 
+2.53.0
+
